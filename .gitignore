@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.pio/
+.pio-core/
+.tools/
+.npm-cache/
+arduino/src/secrets.h
+arduino/SmartFarm/secrets.h
