@@ -38,7 +38,7 @@ bool validSettings(JsonDocument &doc) {
   if (!doc["soilCalibrated"].is<bool>()) return false;
   float start = doc["soilStart"], stop = doc["soilStop"], temp = doc["fanTemperature"], hum = doc["fanHumidity"], lux = doc["lightThreshold"], water = doc["waterMin"];
   unsigned int maxSec = doc["pumpMaxSeconds"], pause = doc["pumpCooldownSeconds"], dry = doc["soilDry"], wet = doc["soilWet"];
-  return start >= 5 && stop <= 95 && stop - start >= 5 && temp >= 10 && temp <= 45 && hum >= 30 && hum <= 95
+  return start >= 5 && stop <= 95 && stop - start >= 5 && temp >= 10 && temp <= 45 && hum >= 5 && hum <= 95
     && lux >= 0.1 && lux <= 90 && water >= 5 && water <= 80 && maxSec >= 1 && maxSec <= 30 && pause >= 10 && pause <= 3600
     && dry >= 1 && dry <= 1022 && wet >= 1 && wet <= 1022 && abs(int(dry) - int(wet)) >= 50;
 }
@@ -63,10 +63,8 @@ uint32_t remainingCooldown() {
   return (duration - elapsed + 999) / 1000;
 }
 void writeOutputs() {
-  if (MOTOR_DRIVER_CONFIGURED) {
-    digitalWrite(PUMP_PIN, (pump == PUMP_ACTIVE_HIGH) ? HIGH : LOW);
-    digitalWrite(FAN_PIN, (fan == FAN_ACTIVE_HIGH) ? HIGH : LOW);
-  }
+  if (PUMP_DRIVER_CONFIGURED) digitalWrite(PUMP_PIN, (pump == PUMP_ACTIVE_HIGH) ? HIGH : LOW);
+  if (FAN_DRIVER_CONFIGURED) digitalWrite(FAN_PIN, (fan == FAN_ACTIVE_HIGH) ? HIGH : LOW);
   digitalWrite(LED_PIN, light ? HIGH : LOW); // GPIO -> 330 ohms -> LED anode -> cathode -> GND.
 }
 void setPump(bool next) {
@@ -87,8 +85,8 @@ void control() {
     wantLight = lightOk && (lightPercent < settings.lightThreshold || (light && lightPercent < settings.lightThreshold + 0.5));
   }
   if (!armed) { wantPump = wantFan = false; if (automatic) wantLight = false; }
-  if (!MOTOR_DRIVER_CONFIGURED || !soilOk || !waterSensorOk || !waterOk || pumpLocked || remainingCooldown() > 0) wantPump = false;
-  if (!MOTOR_DRIVER_CONFIGURED || !dhtOk) wantFan = false;
+  if (!PUMP_DRIVER_CONFIGURED || !soilOk || !waterSensorOk || !waterOk || pumpLocked || remainingCooldown() > 0) wantPump = false;
+  if (!FAN_DRIVER_CONFIGURED || !dhtOk) wantFan = false;
   if (automatic && !lightOk) wantLight = false;
   setPump(wantPump); fan = wantFan; light = wantLight; writeOutputs();
 }
@@ -136,7 +134,7 @@ void status() {
   if (soilOk) d["soil"] = soil;
   if (waterSensorOk) d["waterLevel"] = waterLevel;
   if (lightOk) { d["dark"] = lightPercent < settings.lightThreshold; d["light"] = lightPercent; }
-  d["waterOk"] = waterOk; d["auto"] = automatic; d["armed"] = armed; d["hardwareReady"] = MOTOR_DRIVER_CONFIGURED; d["pumpLocked"] = pumpLocked;
+  d["waterOk"] = waterOk; d["auto"] = automatic; d["armed"] = armed; d["hardwareReady"] = PUMP_DRIVER_CONFIGURED && FAN_DRIVER_CONFIGURED; d["pumpReady"] = PUMP_DRIVER_CONFIGURED; d["fanReady"] = FAN_DRIVER_CONFIGURED; d["pumpLocked"] = pumpLocked;
   d["pumpSeconds"] = pump ? uint32_t(millis() - pumpStarted) / 1000 : 0; d["cooldownSeconds"] = remainingCooldown(); d["uptime"] = millis() / 1000;
   JsonObject o = d["outputs"].to<JsonObject>(); o["pump"] = pump; o["fan"] = fan; o["light"] = light;
   JsonObject sensors = d["sensors"].to<JsonObject>(); sensors["dht"] = dhtOk; sensors["soil"] = soilOk; sensors["light"] = lightOk; sensors["water"] = waterSensorOk;
@@ -168,7 +166,7 @@ void setupApi() {
     if (key != "pump" && key != "fan" && key != "light") { error(400, "Unknown output"); return; }
     bool on = d[key]; control();
     if (!armed && key != "light") { error(409, "Enable motor outputs first"); return; }
-    if (on && (key == "pump" || key == "fan") && !MOTOR_DRIVER_CONFIGURED) { error(409, "Motor driver is not configured"); return; }
+    if (on && ((key == "pump" && !PUMP_DRIVER_CONFIGURED) || (key == "fan" && !FAN_DRIVER_CONFIGURED))) { error(409, "Motor driver is not configured"); return; }
     if (on && key == "pump" && (!waterOk || !waterSensorOk || !soilOk || pumpLocked || remainingCooldown())) { error(409, "Pump blocked by water, soil, timeout or cooldown"); return; }
     if (on && key == "fan" && !dhtOk) { error(409, "DHT sensor unavailable"); return; }
     // A repeated ON request must not reset the maximum-run timer.
@@ -181,10 +179,10 @@ void setupApi() {
 void setup() {
   Serial.begin(115200);
   digitalWrite(LED_PIN, LOW); pinMode(LED_PIN, OUTPUT);
-  if (MOTOR_DRIVER_CONFIGURED) {
-    digitalWrite(PUMP_PIN, PUMP_ACTIVE_HIGH ? LOW : HIGH); pinMode(PUMP_PIN, OUTPUT);
-    digitalWrite(FAN_PIN, FAN_ACTIVE_HIGH ? LOW : HIGH); pinMode(FAN_PIN, OUTPUT);
-  } else { pinMode(PUMP_PIN, INPUT); pinMode(FAN_PIN, INPUT); }
+  if (PUMP_DRIVER_CONFIGURED) { digitalWrite(PUMP_PIN, PUMP_ACTIVE_HIGH ? LOW : HIGH); pinMode(PUMP_PIN, OUTPUT); }
+  else pinMode(PUMP_PIN, INPUT);
+  if (FAN_DRIVER_CONFIGURED) { digitalWrite(FAN_PIN, FAN_ACTIVE_HIGH ? LOW : HIGH); pinMode(FAN_PIN, OUTPUT); }
+  else pinMode(FAN_PIN, INPUT);
   pinMode(LIGHT_INPUT, INPUT);
   analogReadResolution(10); // Keep the web calibration scale at 0..1023.
   analogSetPinAttenuation(SOIL_PIN, ADC_11db);
@@ -207,3 +205,4 @@ void loop() {
   } else { announced = false; if (mdns) { MDNS.end(); mdns = false; } }
   yield();
 }
+

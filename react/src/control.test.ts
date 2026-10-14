@@ -57,3 +57,9 @@ test('analog LED threshold has half-point hysteresis and manual override', () =>
  assert.equal(controlledOutputs({...s,auto:false,light:100,outputs:{...off,light:true}}).light,true);
 });
 
+
+test('fan-only setup keeps pump off', () => {
+ const s={...demoStatus(),armed:true,hardwareReady:false,pumpReady:false,fanReady:true,temperature:35};
+ assert.equal(controlledOutputs(s).fan,true); assert.equal(controlledOutputs(s).pump,false);
+ assert.equal(controlledOutputs({...s,sensors:{...s.sensors,dht:false}}).fan,false);
+});

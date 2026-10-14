@@ -3,7 +3,7 @@ export type Outputs = { pump: boolean; fan: boolean; light: boolean };
 export type Status = {
   schema: 'smartfarm-v1'; temperature: number | null; humidity: number | null;
   soil: number | null; light: number | null; dark: boolean | null; waterOk: boolean; waterLevel: number | null;
-  auto: boolean; armed: boolean; hardwareReady: boolean; pumpLocked: boolean;
+  auto: boolean; armed: boolean; hardwareReady: boolean; pumpReady?: boolean; fanReady?: boolean; pumpLocked: boolean;
   pumpSeconds: number; cooldownSeconds: number; uptime: number;
   outputs: Outputs; settings: Settings;
   sensors: { dht: boolean; soil: boolean; light: boolean; water: boolean };
@@ -15,7 +15,7 @@ export const off: Outputs = { pump: false, fan: false, light: false };
 export function validSettings(s: Settings) {
   return !!s && Object.entries(s).filter(([key]) => key !== 'soilCalibrated').every(([,v]) => typeof v === 'number' && Number.isFinite(v)) && typeof s.soilCalibrated === 'boolean' && s.waterMin >= 5 && s.waterMin <= 80 && [s.soilDry, s.soilWet].every(n => Number.isInteger(n) && n >= 1 && n <= 1022) && Math.abs(s.soilDry - s.soilWet) >= 50
     && s.soilStart >= 5 && s.soilStop <= 95 && s.soilStop - s.soilStart >= 5
-    && s.fanTemperature >= 10 && s.fanTemperature <= 45 && s.fanHumidity >= 30 && s.fanHumidity <= 95
+    && s.fanTemperature >= 10 && s.fanTemperature <= 45 && s.fanHumidity >= 5 && s.fanHumidity <= 95
     && s.lightThreshold >= 0.1 && s.lightThreshold <= 90
     && Number.isInteger(s.pumpMaxSeconds) && s.pumpMaxSeconds >= 1 && s.pumpMaxSeconds <= 30
     && Number.isInteger(s.pumpCooldownSeconds) && s.pumpCooldownSeconds >= 10 && s.pumpCooldownSeconds <= 3600;
@@ -28,8 +28,8 @@ export function controlledOutputs(s: Status): Outputs {
     fan = s.temperature !== null && s.humidity !== null && (s.temperature >= s.settings.fanTemperature || s.humidity >= s.settings.fanHumidity || (fan && (s.temperature > s.settings.fanTemperature - 1 || s.humidity > s.settings.fanHumidity - 3)));
     light = s.capabilities.lightAnalog ? s.light !== null && (s.light < s.settings.lightThreshold || (light && s.light < s.settings.lightThreshold + 0.5)) : s.dark === true;
   }
-  if (!s.hardwareReady || !s.sensors.water || !s.waterOk || s.pumpLocked || s.cooldownSeconds > 0 || s.pumpSeconds >= s.settings.pumpMaxSeconds || (s.capabilities.soil && !s.sensors.soil)) pump = false;
-  if (!s.hardwareReady || !s.sensors.dht) fan = false;
+  if (!(s.pumpReady ?? s.hardwareReady) || !s.sensors.water || !s.waterOk || s.pumpLocked || s.cooldownSeconds > 0 || s.pumpSeconds >= s.settings.pumpMaxSeconds || (s.capabilities.soil && !s.sensors.soil)) pump = false;
+  if (!(s.fanReady ?? s.hardwareReady) || !s.sensors.dht) fan = false;
   if (s.auto && !s.sensors.light) light = false;
   return { pump, fan, light };
 }
@@ -48,7 +48,8 @@ export function demoTick(s: Status): Status {
 }
 export function alerts(s: Status): string[] {
   const messages: string[] = [];
-  if (!s.hardwareReady) messages.push('구동 모듈 설정 필요 · 실제 출력은 잠겨 있습니다');
+  if (!(s.pumpReady ?? s.hardwareReady)) messages.push('펌프 구동 모듈 설정 필요');
+  if (!(s.fanReady ?? s.hardwareReady)) messages.push('팬 구동 모듈 설정 필요');
   if (!s.sensors.water || !s.waterOk) messages.push('물 부족 또는 수위 입력 이상 · 펌프 작동 금지');
   if (s.pumpLocked) messages.push('급수 시간 초과 · 배관과 토양 상태 확인 후 잠금을 해제하세요');
   if (!s.sensors.dht) messages.push('온습도 센서 오류 · 팬 정지');
@@ -57,3 +58,4 @@ export function alerts(s: Status): string[] {
   if (s.temperature !== null && s.temperature >= s.settings.fanTemperature + 5) messages.push('높은 온도 · 재배 환경을 확인하세요');
   return messages;
 }
+
